@@ -1,0 +1,49 @@
+version: 2
+
+models:
+  - name: mart_content_value_index
+    description: "Final Content Value Index mart. Combines quality, engagement, and efficiency signals into a single normalized score per movie. Primary analytical output of this project."
+    columns:
+      - name: movie_id
+        description: "Primary key."
+        tests:
+          - unique
+          - not_null
+      - name: movie_title
+        description: "Original movie title."
+      - name: title_clean
+        description: "Title with release year removed. Used for display in dashboards."
+      - name: release_year
+        description: "Year the movie was released."
+      - name: genre_names
+        description: "Array of genre names from TMDB."
+      - name: production_company_names
+        description: "Array of production company names from TMDB."
+      - name: vote_average
+        description: "TMDB average vote score out of 10."
+      - name: vote_count
+        description: "Total TMDB votes. Used to weight quality signal."
+      - name: popularity
+        description: "TMDB popularity score. Intentionally excluded from CVI due to recency bias."
+      - name: budget
+        description: "Production budget in USD."
+      - name: revenue
+        description: "Box office revenue in USD."
+      - name: runtime
+        description: "Runtime in minutes."
+      - name: rating_count
+        description: "Number of MovieLens user ratings."
+      - name: avg_rating
+        description: "Average MovieLens user rating."
+      - name: rating_stddev
+        description: "Standard deviation of ratings. Indicator of polarizing content."
+      - name: tag_count
+        description: "Number of user-generated tags. Proxy for cultural conversation volume."
+      - name: quality_score
+        description: "Normalized quality signal on 0-1 scale."
+      - name: engagement_score
+        description: "Normalized engagement signal on 0-1 scale."
+      - name: efficiency_score
+        description: "Normalized efficiency signal on 0-1 scale. Null when budget data unavailable."
+      - name: content_value_index
+        description: "Final CVI score. Weighted combination: quality 40%, engagement 40%, efficiency 20%. Higher scores indicate content with strong quality signals, deep user engagement, and efficient production economics."

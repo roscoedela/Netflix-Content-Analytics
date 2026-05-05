@@ -1,0 +1,92 @@
+version: 2
+
+models:
+  - name: stg_movies
+    description: "Cleaned movies table with title, release year, and genres extracted from raw MovieLens data."
+    columns:
+      - name: movie_id
+        description: "Primary key. Unique identifier for each movie."
+        tests:
+          - unique
+          - not_null
+      - name: movie_title
+        description: "Original title including release year in parentheses."
+      - name: title_clean
+        description: "Title with release year removed."
+      - name: release_year
+        description: "Year extracted from the title string."
+      - name: genres_raw
+        description: "Raw pipe-delimited genre string from MovieLens."
+      - name: genres_array
+        description: "Genres split into an array."
+
+  - name: stg_ratings
+    description: "Cleaned ratings table. 32M user ratings from MovieLens."
+    columns:
+      - name: user_id
+        description: "Identifier for the user who submitted the rating."
+      - name: movie_id
+        description: "Foreign key to stg_movies."
+        tests:
+          - not_null
+      - name: rating
+        description: "Rating value between 0.5 and 5.0."
+      - name: rated_at
+        description: "Unix timestamp of when the rating was submitted."
+      - name: rated_at_ts
+        description: "Human-readable timestamp converted from rated_at."
+
+  - name: stg_tags
+    description: "User-generated tags applied to movies from MovieLens."
+    columns:
+      - name: user_id
+        description: "Identifier for the user who applied the tag."
+      - name: movie_id
+        description: "Foreign key to stg_movies."
+      - name: tag
+        description: "Free-text tag string applied by the user."
+      - name: tagged_at
+        description: "Unix timestamp of when the tag was applied."
+      - name: tagged_at_ts
+        description: "Human-readable timestamp converted from tagged_at."
+
+  - name: stg_links
+    description: "Cross-reference table linking MovieLens movie IDs to IMDB and TMDB IDs."
+    columns:
+      - name: movie_id
+        description: "Primary key. MovieLens movie identifier."
+        tests:
+          - unique
+          - not_null
+      - name: imdb_id
+        description: "Corresponding IMDB identifier."
+      - name: tmdb_id
+        description: "Corresponding TMDB identifier."
+
+  - name: stg_tmdb_metadata
+    description: "Cleaned TMDB metadata including budget, revenue, popularity, and parsed genre and production company names."
+    columns:
+      - name: tmdb_id
+        description: "Primary key. TMDB identifier."
+      - name: movie_id
+        description: "Foreign key to stg_movies."
+      - name: title
+        description: "Movie title from TMDB."
+      - name: release_date
+        description: "Official release date."
+      - name: runtime
+        description: "Runtime in minutes."
+      - name: budget
+        description: "Production budget in USD. Zero indicates unknown."
+      - name: revenue
+        description: "Box office revenue in USD. Zero indicates unknown."
+      - name: popularity
+        description: "TMDB popularity score. Recency-weighted engagement metric."
+      - name: vote_average
+        description: "Average user vote on TMDB scale of 0-10."
+      - name: vote_count
+        description: "Total number of votes on TMDB."
+      - name: genre_names
+        description: "Array of genre names parsed from TMDB JSON."
+      - name: production_company_names
+        description: "Array of production company names parsed from TMDB JSON."

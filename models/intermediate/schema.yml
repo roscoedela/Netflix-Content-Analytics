@@ -1,0 +1,45 @@
+version: 2
+
+models:
+  - name: int_content_signals
+    description: "Joins all staging models and computes raw signals used in the Content Value Index. One row per movie."
+    columns:
+      - name: movie_id
+        description: "Primary key. Unique identifier for each movie."
+        tests:
+          - unique
+          - not_null
+      - name: movie_title
+        description: "Original movie title from MovieLens."
+      - name: title_clean
+        description: "Title with release year removed."
+      - name: release_year
+        description: "Year the movie was released."
+      - name: genre_names
+        description: "Array of genre names from TMDB."
+      - name: production_company_names
+        description: "Array of production company names from TMDB."
+      - name: vote_average
+        description: "TMDB average vote score."
+      - name: vote_count
+        description: "Total TMDB votes."
+      - name: popularity
+        description: "TMDB popularity score."
+      - name: budget
+        description: "Production budget in USD."
+      - name: revenue
+        description: "Box office revenue in USD."
+      - name: rating_count
+        description: "Number of MovieLens user ratings for this movie."
+      - name: avg_rating
+        description: "Average MovieLens user rating on 0.5-5.0 scale."
+      - name: rating_stddev
+        description: "Standard deviation of MovieLens ratings. Higher values indicate polarizing content."
+      - name: tag_count
+        description: "Number of user-generated tags applied to this movie."
+      - name: quality_signal
+        description: "Vote average weighted by log of vote count. Rewards highly-rated movies with large sample sizes."
+      - name: engagement_signal
+        description: "Average MovieLens rating weighted by log of rating count. Measures real user engagement depth."
+      - name: efficiency_ratio
+        description: "Revenue divided by budget. Null when budget is unknown or zero."
