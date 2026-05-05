@@ -2,48 +2,62 @@ version: 2
 
 models:
   - name: mart_content_value_index
-    description: "Final Content Value Index mart. Combines quality, engagement, and efficiency signals into a single normalized score per movie. Primary analytical output of this project."
+    description: >
+      Final analytical mart for the Content Value Index (CVI) — a composite scoring model
+      designed to simulate how a streaming platform might evaluate content performance beyond
+      raw popularity. Each movie receives a normalized 0-100 score derived from three
+      independent signals: quality (critic and audience reception), engagement (depth of
+      user interaction), and efficiency (return on production investment). Popularity metrics
+      such as TMDB popularity score are deliberately excluded to avoid recency bias toward
+      new releases. Primary output of this project's dbt pipeline.
     columns:
       - name: movie_id
-        description: "Primary key."
+        description: "Primary key. Sourced from MovieLens dataset."
         tests:
           - unique
           - not_null
       - name: movie_title
-        description: "Original movie title."
+        description: "Original movie title as sourced from MovieLens."
       - name: title_clean
-        description: "Title with release year removed. Used for display in dashboards."
+        description: "Title with release year suffix removed. Used for display in Tableau dashboard."
       - name: release_year
-        description: "Year the movie was released."
+        description: "Year the movie was released. Parsed from MovieLens title field."
       - name: genre_names
-        description: "Array of genre names from TMDB."
+        description: "Array of genre labels from TMDB metadata."
       - name: production_company_names
-        description: "Array of production company names from TMDB."
+        description: "Array of production company names from TMDB metadata."
       - name: vote_average
-        description: "TMDB average vote score out of 10."
+        description: "TMDB average vote score out of 10. Primary input to quality_score."
       - name: vote_count
-        description: "Total TMDB votes. Used to weight quality signal."
+        description: "Total TMDB votes. Used to weight the quality signal — low vote counts are down-weighted to prevent noise from obscure titles."
       - name: popularity
-        description: "TMDB popularity score. Intentionally excluded from CVI due to recency bias."
+        description: "TMDB popularity score. Present for reference but intentionally excluded from CVI calculation due to strong recency bias toward new and trending releases."
       - name: budget
-        description: "Production budget in USD."
+        description: "Production budget in USD from TMDB. Null for many titles — efficiency_score is only calculated when budget is available."
       - name: revenue
-        description: "Box office revenue in USD."
+        description: "Box office revenue in USD from TMDB."
       - name: runtime
         description: "Runtime in minutes."
       - name: rating_count
-        description: "Number of MovieLens user ratings."
+        description: "Number of MovieLens user ratings. Primary input to engagement_score."
       - name: avg_rating
-        description: "Average MovieLens user rating."
+        description: "Average MovieLens user rating on a 0.5-5.0 scale."
       - name: rating_stddev
-        description: "Standard deviation of ratings. Indicator of polarizing content."
+        description: "Standard deviation of user ratings. High values indicate polarizing content — a useful secondary signal for content strategy decisions."
       - name: tag_count
-        description: "Number of user-generated tags. Proxy for cultural conversation volume."
+        description: "Number of user-generated tags applied to the movie. Used as a proxy for cultural conversation volume and depth of audience engagement."
       - name: quality_score
-        description: "Normalized quality signal on 0-1 scale."
+        description: "Normalized quality signal (0-1). Derived from TMDB vote_average, weighted by vote_count to reduce noise from low-sample titles."
       - name: engagement_score
-        description: "Normalized engagement signal on 0-1 scale."
+        description: "Normalized engagement signal (0-1). Derived from MovieLens rating volume and tag activity, reflecting depth of audience interaction beyond passive viewing."
       - name: efficiency_score
-        description: "Normalized efficiency signal on 0-1 scale. Null when budget data unavailable."
+        description: "Normalized efficiency signal (0-1). Calculated as revenue-to-budget ratio where data is available. Null for titles missing budget data. Captures production ROI as a content performance dimension."
       - name: content_value_index
-        description: "Final CVI score. Weighted combination: quality 40%, engagement 40%, efficiency 20%. Higher scores indicate content with strong quality signals, deep user engagement, and efficient production economics."
+        description: >
+          Composite CVI score normalized to 0-100. Calculated as a weighted average of three
+          signals: quality_score (40%), engagement_score (40%), efficiency_score (20%).
+          When efficiency_score is null, weights are redistributed to quality (50%) and
+          engagement (50%) to avoid penalizing titles with missing budget data. A high CVI
+          indicates a movie with strong critical and audience reception, deep user engagement,
+          and — where measurable — efficient production economics. Designed to surface
+          undervalued catalog titles that pure popularity metrics would overlook.
