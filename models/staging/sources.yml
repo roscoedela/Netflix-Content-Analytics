@@ -2,11 +2,97 @@ version: 2
 
 sources:
   - name: raw
+    description: >
+      Raw source tables loaded into DuckDB via Python ingestion scripts. Contains the
+      full MovieLens dataset from GroupLens Research plus TMDB metadata fetched via
+      the TMDB API. This is the unmodified landing layer — no transformations applied.
+      All cleaning and standardization happens in the dbt staging layer.
     database: CONTENT_ANALYTICS
     schema: RAW
+    loaded_at_field: null
     tables:
       - name: movies
+        description: >
+          Raw MovieLens movies table. Contains movie titles with embedded release years
+          and pipe-delimited genre strings. Grain: one row per movie.
+        columns:
+          - name: movieId
+            description: "Source primary key from MovieLens."
+          - name: title
+            description: "Movie title with release year in parentheses e.g. Toy Story (1995)."
+          - name: genres
+            description: "Pipe-delimited genre string e.g. Adventure|Animation|Children. Value (no genres listed) indicates unclassified titles."
+
       - name: ratings
+        description: >
+          Raw MovieLens user ratings. Approximately 32M rows covering thousands of movies.
+          Primary source for engagement signals in the CVI model.
+          Grain: one row per user-movie rating event.
+        columns:
+          - name: userId
+            description: "Anonymous user identifier."
+          - name: movieId
+            description: "Foreign key to movies table."
+          - name: rating
+            description: "Rating on a 0.5 to 5.0 scale in 0.5 increments."
+          - name: timestamp
+            description: "Unix timestamp of rating submission."
+
       - name: tags
+        description: >
+          Raw MovieLens user-generated tags. Free-text labels applied by users to movies.
+          Tag volume is used downstream as a proxy for cultural conversation depth in the
+          CVI engagement signal. Grain: one row per user-movie tag event.
+        columns:
+          - name: userId
+            description: "Anonymous user identifier."
+          - name: movieId
+            description: "Foreign key to movies table."
+          - name: tag
+            description: "Free-text tag string. Not normalized or deduplicated at this layer."
+          - name: timestamp
+            description: "Unix timestamp of tag submission."
+
       - name: links
+        description: >
+          Raw cross-reference table mapping MovieLens movie IDs to IMDB and TMDB
+          identifiers. Enables joins between the MovieLens behavioral data and
+          TMDB metadata in the staging layer. Grain: one row per movie.
+        columns:
+          - name: movieId
+            description: "MovieLens movie identifier."
+          - name: imdbId
+            description: "Corresponding IMDB identifier."
+          - name: tmdbId
+            description: "Corresponding TMDB identifier. Used to join to tmdb_metadata."
+
       - name: tmdb_metadata
+        description: >
+          Raw TMDB movie metadata fetched via the TMDB API. Enriches the MovieLens
+          dataset with production budgets, box office revenue, runtime, and structured
+          genre and production company data. Budget and revenue are stored as zero
+          when the value is unknown — treated as null in downstream efficiency scoring.
+          Grain: one row per movie.
+        columns:
+          - name: tmdb_id
+            description: "TMDB primary identifier."
+          - name: title
+            description: "Movie title as listed on TMDB."
+          - name: release_date
+            description: "Official release date from TMDB."
+          - name: runtime
+            description: "Runtime in minutes."
+          - name: budget
+            description: "Production budget in USD. Zero indicates data not available."
+          - name: revenue
+            description: "Box office revenue in USD. Zero indicates data not available."
+          - name: popularity
+            description: "TMDB popularity score. Recency-weighted — intentionally excluded from CVI to avoid bias toward new releases."
+          - name: vote_average
+            description: "Average vote on a 0-10 scale. Primary input to quality_score in the CVI model."
+          - name: vote_count
+            description: "Total number of TMDB votes. Used to weight quality signal and reduce noise from low-sample titles."
+          - name: genres
+            description: "Raw JSON array of genre objects from TMDB API response. Parsed into genre_names array in stg_tmdb_metadata."
+          - name: production_companies
+            description: "Raw JSON array of production company objects from TMDB API response. Parsed into production_company_names in stg_tmdb_metadata."
