@@ -39,7 +39,7 @@ models:
       - name: runtime
         description: "Runtime in minutes."
       - name: rating_count
-        description: "Number of MovieLens user ratings. Primary input to engagement_score."
+        description: "Number of MovieLens user ratings."
       - name: avg_rating
         description: "Average MovieLens user rating on a 0.5-5.0 scale."
       - name: rating_stddev
@@ -48,10 +48,30 @@ models:
         description: "Number of user-generated tags applied to the movie. Used as a proxy for cultural conversation volume and depth of audience engagement."
       - name: quality_score
         description: "Normalized quality signal (0-1). Derived from TMDB vote_average, weighted by vote_count to reduce noise from low-sample titles."
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+      - name: content_tier
+        description: "Indicates which signals were available for CVI scoring. 'Full Score' — all three signals available (quality, engagement, efficiency). 'No Efficiency' — quality and engagement only, budget data unavailable. Determines which weight distribution was applied to the CVI calculation."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Full Score', 'No Efficiency']
       - name: engagement_score
         description: "Normalized engagement signal (0-1). Derived from MovieLens rating volume and tag activity, reflecting depth of audience interaction beyond passive viewing."
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
       - name: efficiency_score
         description: "Normalized efficiency signal (0-1). Calculated as revenue-to-budget ratio where data is available. Null for titles missing budget data. Captures production ROI as a content performance dimension."
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
       - name: content_value_index
         description: >
           Composite CVI score normalized to 0-100. Calculated as a weighted average of three
@@ -61,3 +81,8 @@ models:
           indicates a movie with strong critical and audience reception, deep user engagement,
           and — where measurable — efficient production economics. Designed to surface
           undervalued catalog titles that pure popularity metrics would overlook.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100

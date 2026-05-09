@@ -6,7 +6,7 @@ normalized as (
     select
         *,
 
-        -- Normalize each signal to 0-1 scale
+        -- Normalize each signal to 0-1 scale using min-max scaling
         (quality_signal - min(quality_signal) over ())
             / nullif(max(quality_signal) over () - min(quality_signal) over (), 0)
                                                 as quality_score,
@@ -48,11 +48,19 @@ final as (
         engagement_score,
         efficiency_score,
 
-        -- Content Value Index: weighted combination of three signals
+        -- Content tier: indicates which signals were available for scoring
+        case
+            when efficiency_score is not null then 'Full Score'
+            else 'No Efficiency'
+        end                                     as content_tier,
+
+        -- CVI with smart weight redistribution based on data availability
         round(
-            (coalesce(quality_score, 0) * 0.4)
-            + (coalesce(engagement_score, 0) * 0.4)
-            + (coalesce(efficiency_score, 0) * 0.2)
+            case
+                when efficiency_score is not null
+                then ((quality_score * 0.4) + (engagement_score * 0.4) + (efficiency_score * 0.2)) * 100
+                else ((quality_score * 0.5) + (engagement_score * 0.5)) * 100
+            end
         , 4)                                    as content_value_index
 
     from normalized

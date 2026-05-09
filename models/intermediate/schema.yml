@@ -33,13 +33,21 @@ models:
         description: "Number of MovieLens user ratings for this movie."
       - name: avg_rating
         description: "Average MovieLens user rating on 0.5-5.0 scale."
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0.5
+              max_value: 5.0
       - name: rating_stddev
         description: "Standard deviation of MovieLens ratings. Higher values indicate polarizing content."
       - name: tag_count
         description: "Number of user-generated tags applied to this movie."
       - name: quality_signal
         description: "Vote average weighted by log of vote count. Rewards highly-rated movies with large sample sizes."
+        tests:
+          - not_null
       - name: engagement_signal
         description: "Average MovieLens rating weighted by log of rating count. Measures real user engagement depth."
+        tests:
+          - not_null
       - name: efficiency_ratio
         description: "Revenue divided by budget. Null when budget is unknown or zero."

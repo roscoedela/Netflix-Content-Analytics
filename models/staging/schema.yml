@@ -2,56 +2,82 @@ version: 2
 
 models:
   - name: stg_movies
-    description: "Cleaned movies table with title, release year, and genres extracted from raw MovieLens data."
+    description: >
+      Staging model for the MovieLens movies dataset. Parses and cleans the raw title
+      field to extract release year, strips year suffixes for display, and splits the
+      pipe-delimited genre string into an array. Grain: one row per movie.
     columns:
       - name: movie_id
-        description: "Primary key. Unique identifier for each movie."
+        description: "Primary key. Unique MovieLens identifier for each movie."
         tests:
           - unique
           - not_null
       - name: movie_title
-        description: "Original title including release year in parentheses."
+        description: "Original title string from MovieLens, including release year in parentheses."
       - name: title_clean
-        description: "Title with release year removed."
+        description: "Title with release year suffix removed. Used for display in dashboards."
       - name: release_year
-        description: "Year extracted from the title string."
+        tests:
+          - not_null:
+              config:
+                severity: warn
+          - dbt_utils.accepted_range:
+              min_value: 1900
+              max_value: 2030
+              config:
+                severity: warn
       - name: genres_raw
-        description: "Raw pipe-delimited genre string from MovieLens."
+        description: "Raw pipe-delimited genre string as received from MovieLens source data."
       - name: genres_array
-        description: "Genres split into an array."
+        description: "Genres split into an array for downstream filtering and aggregation."
 
   - name: stg_ratings
-    description: "Cleaned ratings table. 32M user ratings from MovieLens."
+    description: >
+      Staging model for the MovieLens ratings dataset. ~32M user ratings covering
+      thousands of movies. Converts Unix timestamps to human-readable format.
+      Primary source for engagement signals in the CVI model. Grain: one row per
+      user-movie rating event.
     columns:
       - name: user_id
-        description: "Identifier for the user who submitted the rating."
+        description: "Anonymous identifier for the user who submitted the rating."
       - name: movie_id
         description: "Foreign key to stg_movies."
         tests:
           - not_null
       - name: rating
-        description: "Rating value between 0.5 and 5.0."
+        description: "Rating value on a 0.5 to 5.0 scale in 0.5 increments."
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0.5
+              max_value: 5.0
       - name: rated_at
-        description: "Unix timestamp of when the rating was submitted."
+        description: "Original Unix timestamp of when the rating was submitted."
       - name: rated_at_ts
-        description: "Human-readable timestamp converted from rated_at."
+        description: "Timestamp cast to human-readable format from rated_at."
 
   - name: stg_tags
-    description: "User-generated tags applied to movies from MovieLens."
+    description: >
+      Staging model for the MovieLens tags dataset. User-generated free-text labels
+      applied to movies. Tag volume is used as a proxy for cultural conversation depth
+      in the CVI engagement signal. Grain: one row per user-movie tag event.
     columns:
       - name: user_id
-        description: "Identifier for the user who applied the tag."
+        description: "Anonymous identifier for the user who applied the tag."
       - name: movie_id
         description: "Foreign key to stg_movies."
       - name: tag
-        description: "Free-text tag string applied by the user."
+        description: "Free-text tag string applied by the user. Not normalized or deduplicated at this stage."
       - name: tagged_at
-        description: "Unix timestamp of when the tag was applied."
+        description: "Original Unix timestamp of when the tag was applied."
       - name: tagged_at_ts
-        description: "Human-readable timestamp converted from tagged_at."
+        description: "Timestamp cast to human-readable format from tagged_at."
 
   - name: stg_links
-    description: "Cross-reference table linking MovieLens movie IDs to IMDB and TMDB IDs."
+    description: >
+      Staging model for the MovieLens links dataset. Cross-reference table that maps
+      MovieLens movie IDs to IMDB and TMDB identifiers. Enables joins between the
+      MovieLens behavioral data and TMDB metadata. Grain: one row per movie.
     columns:
       - name: movie_id
         description: "Primary key. MovieLens movie identifier."
@@ -59,34 +85,47 @@ models:
           - unique
           - not_null
       - name: imdb_id
-        description: "Corresponding IMDB identifier."
+        description: "Corresponding IMDB identifier for external reference."
       - name: tmdb_id
-        description: "Corresponding TMDB identifier."
+        description: "Corresponding TMDB identifier. Used to join to stg_tmdb_metadata."
+        tests:
+          - not_null
 
   - name: stg_tmdb_metadata
-    description: "Cleaned TMDB metadata including budget, revenue, popularity, and parsed genre and production company names."
+    description: >
+      Staging model for TMDB movie metadata. Enriches the MovieLens dataset with
+      production details, financial data, and audience metrics from The Movie Database.
+      Budget and revenue fields use zero to indicate unknown values — these are treated
+      as null in downstream efficiency scoring. Grain: one row per movie.
     columns:
       - name: tmdb_id
-        description: "Primary key. TMDB identifier."
+        description: "Primary key. TMDB identifier for the movie."
+        tests:
+          - unique
+          - not_null
       - name: movie_id
-        description: "Foreign key to stg_movies."
+        description: "Foreign key to stg_movies via stg_links."
       - name: title
-        description: "Movie title from TMDB."
+        description: "Movie title as listed on TMDB."
       - name: release_date
-        description: "Official release date."
+        description: "Official release date from TMDB."
       - name: runtime
         description: "Runtime in minutes."
       - name: budget
-        description: "Production budget in USD. Zero indicates unknown."
+        description: "Production budget in USD. Zero values indicate data not available and are treated as null in efficiency scoring."
       - name: revenue
-        description: "Box office revenue in USD. Zero indicates unknown."
+        description: "Box office revenue in USD. Zero values indicate data not available."
       - name: popularity
-        description: "TMDB popularity score. Recency-weighted engagement metric."
+        description: "TMDB popularity score. Recency-weighted metric excluded from CVI to avoid bias toward new releases."
       - name: vote_average
-        description: "Average user vote on TMDB scale of 0-10."
+        description: "Average user vote on a 0-10 scale. Primary input to quality_score in the CVI model."
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 10
       - name: vote_count
-        description: "Total number of votes on TMDB."
+        description: "Total number of TMDB votes. Used to weight the quality signal and reduce noise from low-sample titles."
       - name: genre_names
-        description: "Array of genre names parsed from TMDB JSON."
+        description: "Array of genre names parsed from TMDB JSON response."
       - name: production_company_names
-        description: "Array of production company names parsed from TMDB JSON."
+        description: "Array of production company names parsed from TMDB JSON response."
