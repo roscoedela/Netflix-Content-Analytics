@@ -1,4 +1,36 @@
+cat > .gitignore << 'EOF'
+# Environment & credentials
+.env
+*.env
+profiles.yml
 
-target/
-dbt_packages/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# dbt
+netflix_content_analytics/target/
+netflix_content_analytics/dbt_packages/
+netflix_content_analytics/logs/
+
+# DuckDB
+*.duckdb
+*.duckdb.wal
+
+# Data files (too large for git)
+data/
+
+# Logs
 logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+EOF
