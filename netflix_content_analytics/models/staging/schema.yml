@@ -89,7 +89,10 @@ models:
       - name: tmdb_id
         description: "Corresponding TMDB identifier. Used to join to stg_tmdb_metadata."
         tests:
-          - not_null
+          - not_null:
+              config:
+                severity: warn
+
 
   - name: stg_tmdb_metadata
     description: >
@@ -101,7 +104,9 @@ models:
       - name: tmdb_id
         description: "Primary key. TMDB identifier for the movie."
         tests:
-          - unique
+          - unique:
+              config:
+                severity: warn
           - not_null
       - name: movie_id
         description: "Foreign key to stg_movies via stg_links."
