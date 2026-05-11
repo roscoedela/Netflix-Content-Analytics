@@ -4,11 +4,13 @@ import json
 import requests
 import snowflake.connector
 from dotenv import load_dotenv
+from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 load_dotenv()
 print("ACCOUNT:", os.getenv("SNOWFLAKE_ACCOUNT"))
-from tqdm import tqdm
 
-#Connections
+# Connections
 conn = snowflake.connector.connect(
     user=os.getenv("SNOWFLAKE_USER"),
     password=os.getenv("SNOWFLAKE_PASSWORD"),
@@ -22,30 +24,30 @@ cursor = conn.cursor()
 TMDB_KEY = os.getenv("TMDB_API_KEY")
 print("Connected to Snowflake")
 
-#Create table
+# Create table
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS RAW.TMDB_METADATA (
-        TMDB_ID         VARCHAR,
-        MOVIE_ID        VARCHAR,
-        TITLE           VARCHAR,
-        RELEASE_DATE    VARCHAR,
-        RUNTIME         VARCHAR,
-        BUDGET          VARCHAR,
-        REVENUE         VARCHAR,
-        POPULARITY      VARCHAR,
-        VOTE_AVERAGE    VARCHAR,
-        VOTE_COUNT      VARCHAR,
-        GENRES          VARCHAR,
+        TMDB_ID              VARCHAR,
+        MOVIE_ID             VARCHAR,
+        TITLE                VARCHAR,
+        RELEASE_DATE         VARCHAR,
+        RUNTIME              VARCHAR,
+        BUDGET               VARCHAR,
+        REVENUE              VARCHAR,
+        POPULARITY           VARCHAR,
+        VOTE_AVERAGE         VARCHAR,
+        VOTE_COUNT           VARCHAR,
+        GENRES               VARCHAR,
         PRODUCTION_COMPANIES VARCHAR,
         ORIGINAL_LANGUAGE    VARCHAR,
-        OVERVIEW        VARCHAR,
-        STATUS          VARCHAR,
-        LOADED_AT       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        OVERVIEW             VARCHAR,
+        STATUS               VARCHAR,
+        LOADED_AT            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
 """)
 print("Table created")
 
-#Get TMDB IDs
+# Get TMDB IDs not yet loaded
 cursor.execute("""
     SELECT l.MOVIE_ID, l.TMDB_ID
     FROM RAW.LINKS l
@@ -56,22 +58,21 @@ cursor.execute("""
     ORDER BY l.MOVIE_ID
 """)
 films = cursor.fetchall()
-print(f"{len(films)} films to get from TMDB")
+print(f"{len(films)} films to fetch from TMDB")
 
-
-#API Function
-def fetch_tmdb(tmdb_id):
+# API function
+def fetch_tmdb(tmdb_id, movie_id):
     url = f"https://api.themoviedb.org/3/movie/{tmdb_id}"
     params = {"api_key": TMDB_KEY}
     try:
         r = requests.get(url, params=params, timeout=10)
         if r.status_code == 200:
-            return r.json()
-        return None
+            return movie_id, tmdb_id, r.json()
+        return movie_id, tmdb_id, None
     except Exception:
-        return None
-    
-#Fetch and load data
+        return movie_id, tmdb_id, None
+
+# Insert SQL
 INSERT_SQL = """
     INSERT INTO RAW.TMDB_METADATA (
         TMDB_ID, MOVIE_ID, TITLE, RELEASE_DATE, RUNTIME,
@@ -84,36 +85,43 @@ INSERT_SQL = """
 batch = []
 skipped = 0
 
-for movie_id, tmdb_id in tqdm(films):
-    data = fetch_tmdb(tmdb_id)
-    time.sleep(0.025)
+# Fetch in parallel with 20 workers
+with ThreadPoolExecutor(max_workers=20) as executor:
+    futures = {
+        executor.submit(fetch_tmdb, tmdb_id, movie_id): (movie_id, tmdb_id)
+        for movie_id, tmdb_id in films
+    }
 
-    if not data:
-        skipped += 1
-        continue
+    for future in tqdm(as_completed(futures), total=len(films)):
+        movie_id, tmdb_id, data = future.result()
 
-    batch.append((
-        str(tmdb_id),
-        str(movie_id),
-        data.get("title", ""),
-        data.get("release_date", ""),
-        str(data.get("runtime", "")),
-        str(data.get("budget", "")),
-        str(data.get("revenue", "")),
-        str(data.get("popularity", "")),
-        str(data.get("vote_average", "")),
-        str(data.get("vote_count", "")),
-        json.dumps(data.get("genres", [])),
-        json.dumps(data.get("production_companies", [])),
-        data.get("original_language", ""),
-        data.get("overview", ""),
-        data.get("status", "")
-    ))
+        if not data:
+            skipped += 1
+            continue
 
-    if len(batch) >= 500:
-        cursor.executemany(INSERT_SQL, batch)
-        batch = []
+        batch.append((
+            str(tmdb_id),
+            str(movie_id),
+            data.get("title", ""),
+            data.get("release_date", ""),
+            str(data.get("runtime", "")),
+            str(data.get("budget", "")),
+            str(data.get("revenue", "")),
+            str(data.get("popularity", "")),
+            str(data.get("vote_average", "")),
+            str(data.get("vote_count", "")),
+            json.dumps(data.get("genres", [])),
+            json.dumps(data.get("production_companies", [])),
+            data.get("original_language", ""),
+            data.get("overview", ""),
+            data.get("status", "")
+        ))
 
+        if len(batch) >= 500:
+            cursor.executemany(INSERT_SQL, batch)
+            batch = []
+
+# Insert any remaining records
 if batch:
     cursor.executemany(INSERT_SQL, batch)
 
