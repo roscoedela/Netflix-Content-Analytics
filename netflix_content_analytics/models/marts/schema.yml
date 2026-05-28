@@ -51,27 +51,31 @@ models:
         tests:
           - not_null
           - dbt_utils.accepted_range:
-              min_value: 0
-              max_value: 1
+              arguments:
+                min_value: 0
+                max_value: 1
       - name: content_tier
         description: "Indicates which signals were available for CVI scoring. 'Full Score' — all three signals available (quality, engagement, efficiency). 'No Efficiency' — quality and engagement only, budget data unavailable. Determines which weight distribution was applied to the CVI calculation."
         tests:
           - not_null
           - accepted_values:
+              arguments:
               values: ['Full Score', 'No Efficiency']
       - name: engagement_score
         description: "Normalized engagement signal (0-1). Derived from MovieLens rating volume and tag activity, reflecting depth of audience interaction beyond passive viewing."
         tests:
           - not_null
           - dbt_utils.accepted_range:
-              min_value: 0
-              max_value: 1
+              arguments:
+                min_value: 0
+                max_value: 1
       - name: efficiency_score
         description: "Normalized efficiency signal (0-1). Calculated as revenue-to-budget ratio where data is available. Null for titles missing budget data. Captures production ROI as a content performance dimension."
         tests:
           - dbt_utils.accepted_range:
-              min_value: 0
-              max_value: 1
+              arguments:
+                min_value: 0
+                max_value: 1
       - name: content_value_index
         description: >
           Composite CVI score normalized to 0-100. Calculated as a weighted average of three
@@ -84,5 +88,6 @@ models:
         tests:
           - not_null
           - dbt_utils.accepted_range:
-              min_value: 0
-              max_value: 100
+              arguments:
+                min_value: 0
+                max_value: 100
