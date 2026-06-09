@@ -61,30 +61,30 @@ with DAG(
     )
 
     notify_success = EmailOperator(
-        task_id="notify_success",
-        to="rooscolrozambert@gmail.com",  # replace with your real email
-        subject="✓ CVI Pipeline succeeded — {{ ds }}",
-        html_content="""
-            <h3>CVI Pipeline completed successfully</h3>
-            <p>Run date: {{ ds }}</p>
-            <p>All dbt tests and GX expectations passed.</p>
-        """,
-        trigger_rule=TriggerRule.ALL_SUCCESS,
-    )
+    task_id="notify_success",
+    to="rooscolrozambert@gmail.com",
+    subject="CVI Pipeline succeeded — {{ macros.datetime.now().strftime('%B %d, %Y at %I:%M %p') }}",
+    html_content="""
+        <h3>CVI Pipeline completed successfully</h3>
+        <p>Run date: {{ macros.datetime.now().strftime('%B %d, %Y at %I:%M %p') }}</p>
+        <p>All dbt tests and GX expectations passed.</p>
+    """,
+    trigger_rule=TriggerRule.ALL_SUCCESS,
+)
 
-    notify_failure = EmailOperator(
-        task_id="notify_failure",
-        to="rooscolrozambert@gmail.com",  # replace with your real email
-        subject="✗ CVI Pipeline FAILED — {{ ds }}",
-        html_content="""
-            <h3>CVI Pipeline failed</h3>
-            <p>Run date: {{ ds }}</p>
-            <p>Check Airflow logs for details.</p>
-        """,
-        trigger_rule=TriggerRule.ONE_FAILED,
-    )
+notify_failure = EmailOperator(
+    task_id="notify_failure",
+    to="rooscolrozambert@gmail.com",
+    subject="CVI Pipeline FAILED — {{ macros.datetime.now().strftime('%B %d, %Y at %I:%M %p') }}",
+    html_content="""
+        <h3>CVI Pipeline failed</h3>
+        <p>Run date: {{ macros.datetime.now().strftime('%B %d, %Y at %I:%M %p') }}</p>
+        <p>Check Airflow logs for details.</p>
+    """,
+    trigger_rule=TriggerRule.ONE_FAILED,
+)
 
     # Dependencies
-    [load_movielens, load_tmdb, load_trends] >> dbt_run
-    dbt_run >> dbt_test >> gx_checkpoint
-    gx_checkpoint >> [notify_success, notify_failure]
+[load_movielens, load_tmdb, load_trends] >> dbt_run
+dbt_run >> dbt_test >> gx_checkpoint
+gx_checkpoint >> [notify_success, notify_failure]

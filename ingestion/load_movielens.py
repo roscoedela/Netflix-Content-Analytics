@@ -1,17 +1,33 @@
 import os
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
 import snowflake.connector
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# Load private key for key-pair auth (bypasses MFA)
+with open(os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH"), "rb") as key_file:
+    private_key = serialization.load_pem_private_key(
+        key_file.read(),
+        password=None,
+        backend=default_backend()
+    )
+
+private_key_bytes = private_key.private_bytes(
+    encoding=serialization.Encoding.DER,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption()
+)
+
 conn = snowflake.connector.connect(
     user=os.getenv("SNOWFLAKE_USER"),
-    password=os.getenv("SNOWFLAKE_PASSWORD"),
     account=os.getenv("SNOWFLAKE_ACCOUNT"),
     warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
     database=os.getenv("SNOWFLAKE_DATABASE"),
     role=os.getenv("SNOWFLAKE_ROLE"),
-    schema="RAW"
+    schema="RAW",
+    private_key=private_key_bytes
 )
 cursor = conn.cursor()
 print("Connected to Snowflake")

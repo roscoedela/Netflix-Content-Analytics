@@ -1,15 +1,18 @@
 """
 load_trends.py
 --------------
-Pulls Google Trends search interest for films currently in RAW.TMDB_METADATA
-and appends the current week's data into RAW.GOOGLE_TRENDS.
+Pulls Google Trends search interest and loads into RAW.GOOGLE_TRENDS
+as three separate categories:
 
-Key changes from original:
-  - NO truncate — history is preserved for cumulative CVI
-  - Pulls titles dynamically from Snowflake instead of hardcoded list
-  - Only fetches the current week — not 5 years every run
-  - Skips rows already loaded for the current week (idempotent)
-  - write_pandas replaced with direct INSERT for consistency
+  HISTORICAL        — top films from TMDB by popularity (last 5 years)
+  TRENDING_AUTO     — what Google says is trending right now
+  TRENDING_STRATEGIC — manually curated watchlist (update weekly)
+
+Rules:
+  - Append only — never truncate, history is preserved for cumulative CVI
+  - 10 titles per category — stays under Google rate limits
+  - 10s sleep between batches, 30s sleep between categories
+  - Watermark per category prevents duplicate inserts
 
 ADR: 003_incremental_trends_append
 ADR: 004_dynamic_title_pulling
@@ -18,13 +21,15 @@ ADR: 004_dynamic_title_pulling
 import os
 import time
 import logging
-from datetime import datetime, date
+from datetime import datetime
 
 import pandas as pd
 from pytrends.request import TrendReq
 from dotenv import load_dotenv
 import snowflake.connector
 from snowflake.connector.pandas_tools import write_pandas
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -34,31 +39,66 @@ log = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 BATCH_SIZE = 5       # pytrends hard limit per request
-GEO = ""             # worldwide; set "US" for US only
-SF_DATABASE = os.getenv("SNOWFLAKE_DATABASE", "NETFLIX_DB")
+GEO = ""             # worldwide
+SF_DATABASE = os.getenv("SNOWFLAKE_DATABASE", "CONTENT_ANALYTICS")
 SF_SCHEMA = "RAW"
 SF_TABLE = "GOOGLE_TRENDS"
+TITLE_LIMIT = 10     # max per category — keeps us under rate limits
 
-# How many films to track — ordered by popularity so we get the most relevant
-# Keeping at 50 keeps pytrends manageable (10 batches of 5)
-TITLE_LIMIT = 50
+# Manually curated strategic watchlist — update every Friday
+STRATEGIC_TITLES = [
+    "Obsession movie",
+    "Devil Wears Prada 2",
+    "Backrooms movie",
+    "I Love Boosters movie",
+    "Scary Movie 6 movie ",
+    "Power Ballad movie",
+    "Star Wars The Mandalorian and Grogu movie ",
+    "Masters of the universe movie",
+    "Michael movie",
+    "Pressure movie",
+]
 
 # ---------------------------------------------------------------------------
-# Connection
+# Connection — supports both password and private key auth
 # ---------------------------------------------------------------------------
 def get_conn():
-    return snowflake.connector.connect(
-        account=os.environ["SNOWFLAKE_ACCOUNT"],
-        user=os.environ["SNOWFLAKE_USER"],
-        password=os.environ["SNOWFLAKE_PASSWORD"],
-        warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH"),
-        database=SF_DATABASE,
-        schema=SF_SCHEMA,
-        role=os.environ.get("SNOWFLAKE_ROLE", "SYSADMIN"),
-    )
+    private_key_path = os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH")
+
+    if private_key_path:
+        with open(private_key_path, "rb") as key_file:
+            private_key = serialization.load_pem_private_key(
+                key_file.read(),
+                password=None,
+                backend=default_backend()
+            )
+        private_key_bytes = private_key.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+        return snowflake.connector.connect(
+            user=os.getenv("SNOWFLAKE_USER"),
+            account=os.getenv("SNOWFLAKE_ACCOUNT"),
+            warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
+            database=SF_DATABASE,
+            role=os.getenv("SNOWFLAKE_ROLE"),
+            schema=SF_SCHEMA,
+            private_key=private_key_bytes
+        )
+    else:
+        return snowflake.connector.connect(
+            user=os.getenv("SNOWFLAKE_USER"),
+            password=os.getenv("SNOWFLAKE_PASSWORD"),
+            account=os.getenv("SNOWFLAKE_ACCOUNT"),
+            warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
+            database=SF_DATABASE,
+            role=os.getenv("SNOWFLAKE_ROLE"),
+            schema=SF_SCHEMA
+        )
 
 # ---------------------------------------------------------------------------
-# Setup
+# Setup — create table with CATEGORY column if it doesn't exist
 # ---------------------------------------------------------------------------
 def create_table_if_not_exists(cursor):
     cursor.execute(f"""
@@ -67,18 +107,26 @@ def create_table_if_not_exists(cursor):
             WEEK_OF         DATE          NOT NULL,
             SEARCH_INTEREST INTEGER,
             GEO             VARCHAR(20),
+            CATEGORY        VARCHAR(50)   DEFAULT 'HISTORICAL',
             LOADED_AT       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
         )
     """)
+    # Add CATEGORY column if table already exists without it
+    try:
+        cursor.execute(f"""
+            ALTER TABLE {SF_DATABASE}.{SF_SCHEMA}.{SF_TABLE}
+            ADD COLUMN CATEGORY VARCHAR(50) DEFAULT 'HISTORICAL'
+        """)
+        log.info("Added CATEGORY column to existing table.")
+    except Exception:
+        pass  # column already exists — fine
     log.info("Table %s.%s.%s is ready.", SF_DATABASE, SF_SCHEMA, SF_TABLE)
 
 # ---------------------------------------------------------------------------
-# Dynamic title pulling from Snowflake
-# Pulls the most popular films from the last 2 years
-# Replaces the hardcoded FILM_TITLES list
-# ADR: 004_dynamic_title_pulling
+# Title sources — three separate lists
 # ---------------------------------------------------------------------------
-def get_titles_from_snowflake(cursor) -> list[str]:
+def get_historical_titles(cursor) -> list[str]:
+    """Top films from TMDB ordered by popularity — last 5 years."""
     cursor.execute(f"""
         SELECT TITLE
         FROM {SF_DATABASE}.RAW.TMDB_METADATA
@@ -90,35 +138,57 @@ def get_titles_from_snowflake(cursor) -> list[str]:
         LIMIT {TITLE_LIMIT}
     """)
     titles = [row[0] for row in cursor.fetchall()]
-    log.info("Pulled %d titles dynamically from Snowflake.", len(titles))
+    log.info("Pulled %d historical titles from Snowflake.", len(titles))
     return titles
+
+def get_automated_trending() -> list[str]:
+    """What Google says is trending right now — fully automated."""
+    try:
+        pytrends = TrendReq(hl="en-US", tz=360)
+        trending = pytrends.trending_searches(pn="united_states")
+        film_keywords = ["movie", "film", "netflix", "trailer", "review", "series"]
+        titles = [
+            term for term in trending[0].tolist()
+            if any(kw in term.lower() for kw in film_keywords)
+        ][:TITLE_LIMIT]
+        log.info("Auto-pulled %d trending titles from Google.", len(titles))
+        return titles
+    except Exception as e:
+        log.warning("Could not pull automated trending titles: %s", e)
+        return []
+
+def get_strategic_titles() -> list[str]:
+    """Manually curated watchlist — update STRATEGIC_TITLES every Friday."""
+    log.info("Using %d strategic titles.", len(STRATEGIC_TITLES))
+    return STRATEGIC_TITLES[:TITLE_LIMIT]
+
 # ---------------------------------------------------------------------------
-# Watermark — what's the latest week already loaded?
-# We only insert rows newer than this, making runs idempotent
-# ADR: 003_incremental_trends_append
+# Watermark — per category so each list tracks independently
 # ---------------------------------------------------------------------------
-def get_last_loaded_week(cursor):
+def get_last_loaded_week(cursor, category: str):
     cursor.execute(f"""
         SELECT MAX(WEEK_OF)
         FROM {SF_DATABASE}.{SF_SCHEMA}.{SF_TABLE}
+        WHERE CATEGORY = '{category}'
     """)
     result = cursor.fetchone()[0]
     if result:
-        log.info("Last loaded week: %s — will only insert newer rows.", result)
+        log.info("[%s] Last loaded week: %s", category, result)
     else:
-        log.info("No existing data — first run, loading recent 90 days.")
+        log.info("[%s] No existing data — first run.", category)
     return result
 
 # ---------------------------------------------------------------------------
-# Fetch from pytrends
-# First run: pulls 90 days to seed history
-# Weekly runs: pulls current week only
+# Timeframe — 90 days on first run, current week after that
 # ---------------------------------------------------------------------------
 def build_timeframe(last_loaded_week) -> str:
     if last_loaded_week is None:
-        return "today 3-m"   # first run — seed with 90 days
+        return "today 3-m"   # first run — seed with 90 days of history
     return "now 7-d"         # weekly run — current week only
 
+# ---------------------------------------------------------------------------
+# Fetch from pytrends
+# ---------------------------------------------------------------------------
 def fetch_trends_batch(titles: list[str], pytrends: TrendReq, timeframe: str) -> pd.DataFrame:
     pytrends.build_payload(titles, timeframe=timeframe, geo=GEO)
     df = pytrends.interest_over_time()
@@ -145,31 +215,37 @@ def fetch_all_trends(titles: list[str], timeframe: str) -> pd.DataFrame:
         if not df.empty:
             frames.append(df)
         if i + BATCH_SIZE < len(titles):
-            time.sleep(10)  # stay polite to the API
+            time.sleep(10)  # 10s between batches — avoids rate limiting
 
     if not frames:
-        raise RuntimeError("No trend data fetched for any title.")
+        log.warning("No trend data returned for any title in this batch.")
+        return pd.DataFrame()
 
     return pd.concat(frames, ignore_index=True)
 
 # ---------------------------------------------------------------------------
-# Load — append only, never truncate
-# Filter out rows already in Snowflake before inserting
+# Load — append only, never truncate, tagged by category
 # ---------------------------------------------------------------------------
-def load_to_snowflake(df: pd.DataFrame, conn, last_loaded_week) -> None:
+def load_to_snowflake(df: pd.DataFrame, conn, last_loaded_week, category: str) -> None:
+    if df.empty:
+        log.info("[%s] Nothing to load — empty dataframe.", category)
+        return
+
+    # Filter rows already loaded for this category
     if last_loaded_week:
         before = len(df)
         df = df[df["WEEK_OF"] > last_loaded_week]
         log.info(
-            "Filtered %d already-loaded rows. %d new rows to insert.",
-            before - len(df), len(df)
+            "[%s] Filtered %d already-loaded rows. %d new rows to insert.",
+            category, before - len(df), len(df)
         )
 
     if df.empty:
-        log.info("No new rows to insert — pipeline is up to date.")
+        log.info("[%s] No new rows to insert — pipeline is up to date.", category)
         return
 
     df.columns = [c.upper() for c in df.columns]
+    df["CATEGORY"] = category  # tag each row with its category
 
     success, num_chunks, num_rows, _ = write_pandas(
         conn=conn,
@@ -182,12 +258,12 @@ def load_to_snowflake(df: pd.DataFrame, conn, last_loaded_week) -> None:
     )
 
     if success:
-        log.info("Appended %d rows in %d chunk(s) into %s.", num_rows, num_chunks, SF_TABLE)
+        log.info("[%s] Appended %d rows in %d chunk(s).", category, num_rows, num_chunks)
     else:
-        raise RuntimeError("write_pandas reported failure.")
+        raise RuntimeError(f"write_pandas failed for category {category}.")
 
 # ---------------------------------------------------------------------------
-# Main
+# Main — runs all three categories independently
 # ---------------------------------------------------------------------------
 def main():
     log.info("=== load_trends.py starting ===")
@@ -199,22 +275,46 @@ def main():
     try:
         create_table_if_not_exists(cursor)
 
-        # Pull titles dynamically from Snowflake
-        titles = get_titles_from_snowflake(cursor)
-        if not titles:
-            raise RuntimeError("No titles found in TMDB_METADATA — run load_tmdb.py first.")
+        # ----------------------------------------------------------------
+        # 1. HISTORICAL — top films from TMDB
+        # ----------------------------------------------------------------
+        log.info("=== Category: HISTORICAL ===")
+        historical_titles = get_historical_titles(cursor)
+        if historical_titles:
+            last_week = get_last_loaded_week(cursor, "HISTORICAL")
+            timeframe = build_timeframe(last_week)
+            log.info("Using timeframe: %s", timeframe)
+            df = fetch_all_trends(historical_titles, timeframe)
+            load_to_snowflake(df, conn, last_week, category="HISTORICAL")
+        else:
+            log.warning("No historical titles found — skipping.")
 
-        # Check watermark — determines timeframe and what to skip
-        last_loaded_week = get_last_loaded_week(cursor)
-        timeframe = build_timeframe(last_loaded_week)
-        log.info("Using timeframe: %s", timeframe)
+        log.info("Sleeping 30s before next category...")
+        time.sleep(30)
 
-        # Fetch from Google Trends
-        df = fetch_all_trends(titles, timeframe)
-        log.info("Fetched %d trend rows for %d titles.", len(df), df["TITLE"].nunique())
+        # ----------------------------------------------------------------
+        # 2. TRENDING_AUTO — what Google says is hot right now
+        # ----------------------------------------------------------------
+        log.info("=== Category: TRENDING_AUTO ===")
+        auto_titles = get_automated_trending()
+        if auto_titles:
+            last_week = get_last_loaded_week(cursor, "TRENDING_AUTO")
+            df = fetch_all_trends(auto_titles, "now 7-d")
+            load_to_snowflake(df, conn, last_week, category="TRENDING_AUTO")
+        else:
+            log.warning("No automated trending titles found — skipping.")
 
-        # Append to Snowflake — never truncate
-        load_to_snowflake(df, conn, last_loaded_week)
+        log.info("Sleeping 30s before next category...")
+        time.sleep(30)
+
+        # ----------------------------------------------------------------
+        # 3. TRENDING_STRATEGIC — manually curated watchlist
+        # ----------------------------------------------------------------
+        log.info("=== Category: TRENDING_STRATEGIC ===")
+        strategic_titles = get_strategic_titles()
+        last_week = get_last_loaded_week(cursor, "TRENDING_STRATEGIC")
+        df = fetch_all_trends(strategic_titles, "now 7-d")
+        load_to_snowflake(df, conn, last_week, category="TRENDING_STRATEGIC")
 
     finally:
         cursor.close()
