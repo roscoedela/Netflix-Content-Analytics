@@ -93,6 +93,19 @@ sources:
           - name: vote_count
             description: "Total number of TMDB votes. Used to weight quality signal and reduce noise from low-sample titles."
           - name: genres
-            description: "Raw JSON array of genre objects from TMDB API response. Parsed into genre_names array in stg_tmdb_metadata."
+            description: "Raw JSON array of genre objects from TMDB API response."
           - name: production_companies
-            description: "Raw JSON array of production company objects from TMDB API response. Parsed into production_company_names in stg_tmdb_metadata."
+            description: "Raw JSON array of production company objects from TMDB API response."
+
+      - name: tmdb_credits
+        identifier: TMDB_CREDITS
+        description: "Cast and crew credits from TMDB API — top 5 cast, director, cinematographer, composer, writer"
+        columns:
+          - name: movie_id
+            description: "MovieLens movie ID"
+          - name: person_id
+            description: "TMDB person ID"
+          - name: name
+            description: "Person name"
+          - name: role
+            description: "Role type: cast, director, cinematographer, composer, writer"
